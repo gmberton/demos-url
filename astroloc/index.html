@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AstroLoc Demo</title>
+  <style>
+    body { font-family: sans-serif; display: flex; justify-content: center;
+           align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+    p { color: #555; font-size: 1.1em; }
+  </style>
+</head>
+<body>
+  <p id="msg">Redirecting to demo&hellip;</p>
+  <script>
+    fetch('https://raw.githubusercontent.com/gmberton/demos-url/main/astroloc/url.txt?t=' + Date.now())
+      .then(function(r) { return r.text(); })
+      .then(function(url) { window.location.replace(url.trim()); })
+      .catch(function() {
+        document.getElementById('msg').textContent =
+          'Demo is temporarily unavailable. Please try again in a few minutes.';
+      });
+  </script>
+</body>
+</html>
