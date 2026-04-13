@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FoundYou Demo</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    #msg {
+      font-family: sans-serif; display: flex; justify-content: center;
+      align-items: center; height: 100vh; background: #f5f5f5; color: #555; font-size: 1.1em;
+    }
+    #demo-frame { position: fixed; top: 0; left: 0; width: 100%; height: 100%; border: none; }
+  </style>
+</head>
+<body>
+  <div id="msg">Loading demo&hellip;</div>
+  <iframe id="demo-frame" style="display:none"
+    allow="clipboard-write; fullscreen"></iframe>
+  <script>
+    fetch("https://raw.githubusercontent.com/gmberton/demos-url/main/foundyou/url.txt?t=" + Date.now())
+      .then(function(r) { return r.text(); })
+      .then(function(url) {
+        var frame = document.getElementById("demo-frame");
+        frame.src = url.trim();
+        frame.onload = function() {
+          document.getElementById("msg").style.display = "none";
+          frame.style.display = "block";
+        };
+      })
+      .catch(function() {
+        document.getElementById("msg").textContent =
+          "Demo is temporarily unavailable. Please try again in a few minutes.";
+      });
+  </script>
+</body>
+</html>
