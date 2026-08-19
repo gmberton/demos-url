@@ -1,0 +1,80 @@
+# Alerts when the thanos demos are down: every 30 min, probe the three *.gradio.live links in */url.txt.
+# A link that stays dead for > TOLERANCE_MIN fails the run, and GitHub emails the workflow's creator about
+# failed runs (Settings → Notifications → Actions). While still down it re-fails at most every REALERT_H hours.
+# A dead link for up to ~70 min is NORMAL (the thanos watchdogs poll hourly, then restart app.py and republish),
+# hence the tolerance window. Usual real cause: thanos/node1 reboot → zombie SLURM jobs; fix = scancel + fresh
+# srun + extend_job (see demos/THANOS_GUIDE.md on thanos).
+# Note: GitHub disables scheduled workflows in public repos after 60 days without commits; the watchdogs commit
+# every 1-3 weeks so this never triggers while the demos are alive, and during an outage the alert fires long before.
+name: demos healthcheck
+
+on:
+  schedule:
+    - cron: '13,43 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: 'Skip the checks and fail immediately (tests the email channel)'
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: demos-healthcheck
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: thanos demos reachable
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEMOS: astroloc megaloc foundyou
+      TOLERANCE_MIN: 90
+      REALERT_H: 6
+    steps:
+      - name: test alert
+        if: ${{ inputs.test_alert == true }}
+        run: |
+          echo "::error::TEST alert requested via workflow_dispatch — the demos were NOT checked"
+          exit 1
+
+      - name: probe the gradio share links
+        id: probe
+        run: |
+          probe() {
+            down=""
+            for d in $DEMOS; do
+              url=$(curl -sf -m 20 "https://raw.githubusercontent.com/${{ github.repository }}/main/$d/url.txt?$(date +%s)" | tr -d '[:space:]' || true)
+              code=$(curl -s -o /dev/null -m 30 -w '%{http_code}' "${url:-http://invalid.invalid}" || true)
+              [ "${code:-000}" = 200 ] || down="$down $d(${code:-000})"
+            done
+          }
+          deadline=$(( $(date +%s) + TOLERANCE_MIN*60 ))
+          while :; do
+            probe
+            if [ -z "$down" ]; then
+              echo "all up"; echo "all up — $(date -u '+%F %T UTC')" >> "$GITHUB_STEP_SUMMARY"
+              echo "down=" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "$(date -u '+%F %T UTC') down:$down"
+            [ $(date +%s) -lt $deadline ] || break
+            sleep 300
+          done
+          echo "DOWN for > ${TOLERANCE_MIN} min:$down" >> "$GITHUB_STEP_SUMMARY"
+          echo "down=$down" >> "$GITHUB_OUTPUT"
+
+      - name: alert (failed run → email), throttled while still down
+        if: steps.probe.outputs.down != ''
+        run: |
+          last=$(gh api "repos/${{ github.repository }}/actions/workflows/healthcheck.yml/runs?event=schedule&status=failure&per_page=1" -q '.workflow_runs[0].created_at // empty' || true)
+          if [ -n "$last" ] && [ $(( $(date +%s) - $(date -d "$last" +%s) )) -lt $(( REALERT_H*3600 )) ]; then
+            echo "::warning::still down:${{ steps.probe.outputs.down }} — last alert $last, next re-alert after ${REALERT_H}h"
+            exit 0
+          fi
+          echo "::error::thanos demos DOWN for > ${TOLERANCE_MIN} min:${{ steps.probe.outputs.down }} — likely thanos/node1 reboot → zombie SLURM jobs; fix: scancel + fresh srun + extend_job (demos/THANOS_GUIDE.md)"
+          exit 1
