@@ -1,6 +1,8 @@
 # Alerts when the thanos demos are down: every 30 min, probe the three *.gradio.live links in */url.txt.
 # A link that stays dead for > TOLERANCE_MIN fails the run, and GitHub emails the workflow's creator about
-# failed runs (Settings → Notifications → Actions). While still down it re-fails at most every REALERT_H hours.
+# failed runs (Settings → Notifications → Actions). ONE email per outage: after a failed run, later runs stay
+# green (with a warning) until something is relaunched — every relaunch pushes a new url.txt commit, so "no commit
+# on main since the last failed scheduled run" = same outage = don't email again.
 # A dead link for up to ~70 min is NORMAL (the thanos watchdogs poll hourly, then restart app.py and republish),
 # hence the tolerance window. Usual real cause: thanos/node1 reboot → zombie SLURM jobs; fix = scancel + fresh
 # srun + extend_job (see demos/THANOS_GUIDE.md on thanos).
@@ -35,7 +37,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DEMOS: astroloc megaloc foundyou
       TOLERANCE_MIN: 90
-      REALERT_H: 6
     steps:
       - name: test alert
         if: ${{ inputs.test_alert == true }}
@@ -68,12 +69,13 @@ jobs:
           echo "DOWN for > ${TOLERANCE_MIN} min:$down" >> "$GITHUB_STEP_SUMMARY"
           echo "down=$down" >> "$GITHUB_OUTPUT"
 
-      - name: alert (failed run → email), throttled while still down
+      - name: alert (failed run → email), once per outage
         if: steps.probe.outputs.down != ''
         run: |
-          last=$(gh api "repos/${{ github.repository }}/actions/workflows/healthcheck.yml/runs?event=schedule&status=failure&per_page=1" -q '.workflow_runs[0].created_at // empty' || true)
-          if [ -n "$last" ] && [ $(( $(date +%s) - $(date -d "$last" +%s) )) -lt $(( REALERT_H*3600 )) ]; then
-            echo "::warning::still down:${{ steps.probe.outputs.down }} — last alert $last, next re-alert after ${REALERT_H}h"
+          last_fail=$(gh api "repos/${{ github.repository }}/actions/workflows/healthcheck.yml/runs?event=schedule&status=failure&per_page=1" -q '.workflow_runs[0].created_at // empty' || true)
+          last_commit=$(gh api "repos/${{ github.repository }}/commits/main" -q '.commit.committer.date // empty' || true)
+          if [ -n "$last_fail" ] && [ -n "$last_commit" ] && [ "$(date -d "$last_commit" +%s)" -lt "$(date -d "$last_fail" +%s)" ]; then
+            echo "::warning::still down:${{ steps.probe.outputs.down }} — already emailed at $last_fail and nothing was relaunched since (no commit on main); not emailing again"
             exit 0
           fi
           echo "::error::thanos demos DOWN for > ${TOLERANCE_MIN} min:${{ steps.probe.outputs.down }} — likely thanos/node1 reboot → zombie SLURM jobs; fix: scancel + fresh srun + extend_job (demos/THANOS_GUIDE.md)"
