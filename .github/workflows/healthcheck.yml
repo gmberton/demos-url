@@ -1,11 +1,11 @@
-# Alerts when the thanos demos are down: every 30 min, probe the three *.gradio.live links in */url.txt.
+# Alerts when the demos are down: every 30 min, probe the three *.gradio.live links in */url.txt.
 # A link that stays dead for > TOLERANCE_MIN fails the run, and GitHub emails the workflow's creator about
 # failed runs (Settings → Notifications → Actions). ONE email per outage: after a failed run, later runs stay
 # green (with a warning) until something is relaunched — every relaunch pushes a new url.txt commit, so "no commit
 # on main since the last failed scheduled run" = same outage = don't email again.
-# A dead link for up to ~70 min is NORMAL (the thanos watchdogs poll hourly, then restart app.py and republish),
-# hence the tolerance window. Usual real cause: thanos/node1 reboot → zombie SLURM jobs; fix = scancel + fresh
-# srun + extend_job (see demos/THANOS_GUIDE.md on thanos).
+# A dead link for up to ~70 min is NORMAL (the watchdogs poll hourly, then restart app.py and republish),
+# hence the tolerance window. Usual real cause: a server reboot → zombie SLURM jobs; fix = scancel + fresh
+# srun + extend_job (see internal ops notes).
 # Note: GitHub disables scheduled workflows in public repos after 60 days without commits; the watchdogs commit
 # every 1-3 weeks so this never triggers while the demos are alive, and during an outage the alert fires long before.
 name: demos healthcheck
@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   check:
-    name: thanos demos reachable
+    name: demos reachable
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -78,5 +78,5 @@ jobs:
             echo "::warning::still down:${{ steps.probe.outputs.down }} — already emailed at $last_fail and nothing was relaunched since (no commit on main); not emailing again"
             exit 0
           fi
-          echo "::error::thanos demos DOWN for > ${TOLERANCE_MIN} min:${{ steps.probe.outputs.down }} — likely thanos/node1 reboot → zombie SLURM jobs; fix: scancel + fresh srun + extend_job (demos/THANOS_GUIDE.md)"
+          echo "::error::demos DOWN for > ${TOLERANCE_MIN} min:${{ steps.probe.outputs.down }} — likely a server reboot → zombie SLURM jobs; fix: scancel + fresh srun + extend_job (see internal ops notes)"
           exit 1
