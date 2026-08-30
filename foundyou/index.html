@@ -17,26 +17,39 @@
   <iframe id="demo-frame" style="display:none"
     allow="clipboard-write; fullscreen"></iframe>
   <script>
-    // raw.githubusercontent.com is a CDN: right after a relaunch some edges keep
-    // serving the PREVIOUS url.txt for minutes, even with a cache-buster, and
-    // framing that stale link lands on gradio's "No interface is running" page.
-    // So probe the link first -- but the probe has THREE outcomes, not two:
-    //   live    (200)            -> frame it
-    //   dead    (404)            -> stale edge, re-read url.txt and retry
-    //   unknown (fetch threw)    -> we cannot tell; frame it anyway.
-    // Treating "unknown" as "dead" is what made this page retry forever for
-    // anyone whose browser blocks the cross-origin probe.
-    var RAW = "https://raw.githubusercontent.com/gmberton/demos-url/main/foundyou/url.txt";
-    var MAX = 5;
+  (function () {
+    // The demo's *.gradio.live URL changes on every relaunch. Two failure modes
+    // follow, and this page has to survive both:
+    //
+    //  1. A tab opened BEFORE a relaunch keeps an iframe pointed at the old
+    //     tunnel. That tunnel dies, and gradio serves "No interface is running"
+    //     inside the frame -- looking like an outage in a demo that is up.
+    //     Fix: KEEP POLLING url.txt and re-frame when the URL changes. A page
+    //     left open all day now heals itself a few seconds after each relaunch.
+    //
+    //  2. url.txt is read through a CDN, and right after a relaunch an edge can
+    //     still serve the previous value. Fix: read it same-origin from Pages
+    //     first (no CORS, and it is a different cache from raw), fall back to
+    //     raw, and prefer whichever candidate answers /config with 200.
+    //
+    // The /config probe has THREE outcomes: live (200), dead (404) and unknown
+    // (the fetch threw -- blocked cross-origin, extension, offline). "unknown"
+    // must never block loading; treating it as "dead" once made this page retry
+    // forever while the demo was fine.
+    var SOURCES = [
+      "url.txt",
+      "https://raw.githubusercontent.com/gmberton/demos-url/main/foundyou/url.txt"
+    ];
+    var POLL_MS = 15000;
     var msg = document.getElementById("msg");
     var frame = document.getElementById("demo-frame");
+    var framed = null;
 
-    function show(url) {
-      frame.src = url;
-      frame.onload = function () {
-        msg.style.display = "none";
-        frame.style.display = "block";
-      };
+    function read(src) {
+      return fetch(src + "?t=" + Date.now(), { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.text() : ""; })
+        .then(function (t) { return t.trim(); })
+        .catch(function () { return ""; });
     }
 
     function probe(url) {
@@ -45,26 +58,55 @@
         .catch(function () { return "unknown"; });
     }
 
-    function attempt(n) {
-      fetch(RAW + "?t=" + Date.now() + "-" + n, { cache: "no-store" })
-        .then(function (r) { return r.text(); })
-        .then(function (t) {
-          var url = t.trim();
-          return probe(url).then(function (state) {
-            if (state === "live" || state === "unknown" || n >= MAX) { show(url); return; }
-            msg.textContent = "Loading demo… (retrying)";
-            setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
-          });
-        })
-        .catch(function () {
-          if (n >= MAX) {
-            msg.textContent = "Demo is temporarily unavailable. Please try again in a few minutes.";
-            return;
-          }
-          setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
+    function candidates() {
+      return Promise.all(SOURCES.map(read)).then(function (urls) {
+        var seen = {}, out = [];
+        urls.forEach(function (u) {
+          if (u && u.indexOf("http") === 0 && !seen[u]) { seen[u] = 1; out.push(u); }
         });
+        return out;
+      });
     }
-    attempt(0);
+
+    function pick() {
+      return candidates().then(function (list) {
+        if (!list.length) return null;
+        return Promise.all(list.map(probe)).then(function (states) {
+          for (var i = 0; i < list.length; i++) if (states[i] === "live") return list[i];
+          for (var j = 0; j < list.length; j++) if (states[j] === "unknown") return list[j];
+          return null;   // every candidate answered 404: a relaunch is in flight
+        });
+      });
+    }
+
+    function show(url) {
+      if (url === framed) return;
+      framed = url;
+      frame.src = url;
+      frame.onload = function () {
+        msg.style.display = "none";
+        frame.style.display = "block";
+      };
+    }
+
+    function tick(first) {
+      pick().then(function (url) {
+        if (url) { show(url); return; }
+        if (first || !framed) {
+          msg.textContent = "Demo is restarting… this page will load it automatically.";
+          msg.style.display = "flex";
+          frame.style.display = "none";
+        }
+      });
+    }
+
+    tick(true);
+    setInterval(function () { tick(false); }, POLL_MS);
+    // a tab woken from the background should not wait for the next tick
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) tick(false);
+    });
+  })();
   </script>
 </body>
 </html>
