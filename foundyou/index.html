@@ -17,50 +17,52 @@
   <iframe id="demo-frame" style="display:none"
     allow="clipboard-write; fullscreen"></iframe>
   <script>
-    // Never frame a URL without checking it first. raw.githubusercontent.com is a
-    // CDN: right after a relaunch some edges keep serving the PREVIOUS url.txt for
-    // minutes, even with a cache-buster. Framing that stale link lands the visitor
-    // on gradio's "No interface is running" page, which looks like the demo is
-    // down when it is actually up at a newer URL.
-    // The share tunnel sends Access-Control-Allow-Origin for this origin, so
-    // /config can be probed cross-origin: 200 = live, 404 = stale link, retry.
+    // raw.githubusercontent.com is a CDN: right after a relaunch some edges keep
+    // serving the PREVIOUS url.txt for minutes, even with a cache-buster, and
+    // framing that stale link lands on gradio's "No interface is running" page.
+    // So probe the link first -- but the probe has THREE outcomes, not two:
+    //   live    (200)            -> frame it
+    //   dead    (404)            -> stale edge, re-read url.txt and retry
+    //   unknown (fetch threw)    -> we cannot tell; frame it anyway.
+    // Treating "unknown" as "dead" is what made this page retry forever for
+    // anyone whose browser blocks the cross-origin probe.
     var RAW = "https://raw.githubusercontent.com/gmberton/demos-url/main/foundyou/url.txt";
+    var MAX = 5;
     var msg = document.getElementById("msg");
     var frame = document.getElementById("demo-frame");
 
-    function readUrl(attempt) {
-      return fetch(RAW + "?t=" + Date.now() + "-" + attempt, { cache: "no-store" })
-        .then(function (r) { return r.text(); })
-        .then(function (t) { return t.trim(); });
+    function show(url) {
+      frame.src = url;
+      frame.onload = function () {
+        msg.style.display = "none";
+        frame.style.display = "block";
+      };
     }
 
-    function isLive(url) {
+    function probe(url) {
       return fetch(url + "/config", { cache: "no-store" })
-        .then(function (r) { return r.ok; })
-        .catch(function () { return false; });
+        .then(function (r) { return r.ok ? "live" : "dead"; })
+        .catch(function () { return "unknown"; });
     }
 
     function attempt(n) {
-      if (n >= 6) {
-        msg.textContent = "Demo is temporarily unavailable. Please try again in a few minutes.";
-        return;
-      }
-      if (n > 0) msg.textContent = "Loading demo… (retrying)";
-      readUrl(n).then(function (url) {
-        return isLive(url).then(function (live) {
-          if (live) {
-            frame.src = url;
-            frame.onload = function () {
-              msg.style.display = "none";
-              frame.style.display = "block";
-            };
-          } else {
+      fetch(RAW + "?t=" + Date.now() + "-" + n, { cache: "no-store" })
+        .then(function (r) { return r.text(); })
+        .then(function (t) {
+          var url = t.trim();
+          return probe(url).then(function (state) {
+            if (state === "live" || state === "unknown" || n >= MAX) { show(url); return; }
+            msg.textContent = "Loading demo… (retrying)";
             setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
+          });
+        })
+        .catch(function () {
+          if (n >= MAX) {
+            msg.textContent = "Demo is temporarily unavailable. Please try again in a few minutes.";
+            return;
           }
+          setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
         });
-      }).catch(function () {
-        setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
-      });
     }
     attempt(0);
   </script>
