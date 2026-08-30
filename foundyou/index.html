@@ -17,20 +17,52 @@
   <iframe id="demo-frame" style="display:none"
     allow="clipboard-write; fullscreen"></iframe>
   <script>
-    fetch("https://raw.githubusercontent.com/gmberton/demos-url/main/foundyou/url.txt?t=" + Date.now())
-      .then(function(r) { return r.text(); })
-      .then(function(url) {
-        var frame = document.getElementById("demo-frame");
-        frame.src = url.trim();
-        frame.onload = function() {
-          document.getElementById("msg").style.display = "none";
-          frame.style.display = "block";
-        };
-      })
-      .catch(function() {
-        document.getElementById("msg").textContent =
-          "Demo is temporarily unavailable. Please try again in a few minutes.";
+    // Never frame a URL without checking it first. raw.githubusercontent.com is a
+    // CDN: right after a relaunch some edges keep serving the PREVIOUS url.txt for
+    // minutes, even with a cache-buster. Framing that stale link lands the visitor
+    // on gradio's "No interface is running" page, which looks like the demo is
+    // down when it is actually up at a newer URL.
+    // The share tunnel sends Access-Control-Allow-Origin for this origin, so
+    // /config can be probed cross-origin: 200 = live, 404 = stale link, retry.
+    var RAW = "https://raw.githubusercontent.com/gmberton/demos-url/main/foundyou/url.txt";
+    var msg = document.getElementById("msg");
+    var frame = document.getElementById("demo-frame");
+
+    function readUrl(attempt) {
+      return fetch(RAW + "?t=" + Date.now() + "-" + attempt, { cache: "no-store" })
+        .then(function (r) { return r.text(); })
+        .then(function (t) { return t.trim(); });
+    }
+
+    function isLive(url) {
+      return fetch(url + "/config", { cache: "no-store" })
+        .then(function (r) { return r.ok; })
+        .catch(function () { return false; });
+    }
+
+    function attempt(n) {
+      if (n >= 6) {
+        msg.textContent = "Demo is temporarily unavailable. Please try again in a few minutes.";
+        return;
+      }
+      if (n > 0) msg.textContent = "Loading demo… (retrying)";
+      readUrl(n).then(function (url) {
+        return isLive(url).then(function (live) {
+          if (live) {
+            frame.src = url;
+            frame.onload = function () {
+              msg.style.display = "none";
+              frame.style.display = "block";
+            };
+          } else {
+            setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
+          }
+        });
+      }).catch(function () {
+        setTimeout(function () { attempt(n + 1); }, 2000 * (n + 1));
       });
+    }
+    attempt(0);
   </script>
 </body>
 </html>
