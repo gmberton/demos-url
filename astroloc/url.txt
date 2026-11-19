@@ -1,1 +1,1 @@
-https://api.trycloudflare.com
+https://0c6868c055d4013782.gradio.live
